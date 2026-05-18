@@ -45,5 +45,14 @@ COPY --from=python-builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn
 RUN mkdir /app
 WORKDIR /app
 
+# gunicorn 26's control server needs a writable $HOME/.gunicorn.
+ENV HOME=/tmp
+
 EXPOSE 8080
-ENTRYPOINT ["optuna-dashboard", "--port", "8080", "--host", "0.0.0.0", "--server", "gunicorn"]
+# Project-agnostic default: point any project at its Optuna storage via
+#   docker run -e OPTUNA_DASHBOARD_STORAGE=<url> ghcr.io/qoxi-cloud/optuna-dashboard
+# (or discrete PG_* env vars). Single gunicorn worker on purpose — the
+# incremental trial cache is per-process. Override `command` to change.
+ENTRYPOINT ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", \
+            "--threads", "4", "--timeout", "180", \
+            "--graceful-timeout", "30", "optuna_dashboard._qoxi:application"]
