@@ -302,7 +302,7 @@ class _CachedExtraStudyPropertyUserAttrs(TestCase):
                 "d": "a",
                 "e": 1,
                 "f": True,
-                "g": np.float128(1.1),
+                "g": np.longdouble(1.1),
                 "h": np.int64(2),
             },
             {"a": 2, "b": "a", "c": "a", "d": "a"},
