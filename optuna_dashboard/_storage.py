@@ -8,8 +8,35 @@ from optuna.storages import RDBStorage
 from optuna.study import StudyDirection
 from optuna.study._frozen import FrozenStudy
 from optuna.trial import FrozenTrial
+from sqlalchemy import text
 
 from ._inmemory_cache import InMemoryCache
+
+
+def _authoritative_trial_count(storage: BaseStorage, study_id: int) -> int | None:
+    """Cheap COUNT(*) of the study's trials straight from the RDB.
+
+    The append-only incremental cache cannot see a study reset when the
+    new trials get trial_ids <= the cached watermark (e.g. the sweep
+    recreates the Optuna schema → the trial_id sequence restarts). The
+    dense-number invariant also passes then, because the stale cached set
+    is internally contiguous. An authoritative count is the only reliable
+    anchor. Returns None if it can't be obtained (non-RDB / error) so the
+    caller just keeps the fast path.
+    """
+    engine = getattr(storage, "engine", None)
+    if engine is None:
+        return None
+    try:
+        with engine.connect() as conn:
+            return int(
+                conn.execute(
+                    text("SELECT count(*) FROM trials WHERE study_id = :sid"),
+                    {"sid": study_id},
+                ).scalar()
+            )
+    except Exception:
+        return None
 
 
 def get_trials(
@@ -75,6 +102,18 @@ def get_trials(
                 if n:
                     nums = [t.number for t in merged]
                     if max(nums) != n - 1 or len(set(nums)) != n:
+                        stale = True
+
+                # Authoritative anchor: if the cache holds MORE trials than
+                # the study actually has, it is stale (study reset/trimmed,
+                # incl. the schema-recreate / trial_id-sequence-reset case
+                # the dense-number invariant cannot detect). Only the
+                # "cache > DB" direction is treated as stale — being a few
+                # behind during a fast sweep is normal incremental lag, not
+                # phantom, and must not thrash the full-reload path.
+                if not stale:
+                    actual = _authoritative_trial_count(storage, study_id)
+                    if actual is not None and n > actual:
                         stale = True
 
                 if not stale:
