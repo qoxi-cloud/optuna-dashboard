@@ -66,7 +66,11 @@ def get_param_importance_from_trials_cache(
         # Only recompute once the completed-trial count grew by a meaningful
         # margin (>=2%, min 100) since the cached value was produced.
         recompute_threshold = max(100, cache_n_trial // 50)
-        if cache_n_trial > 0 and n_completed_trials - cache_n_trial < recompute_threshold:
+        delta = n_completed_trials - cache_n_trial
+        # Serve cache only when the count grew by less than the threshold.
+        # A decrease (delta < 0) means the study was reset/trimmed → always
+        # recompute rather than return importance for trials that are gone.
+        if cache_n_trial > 0 and 0 <= delta < recompute_threshold:
             return cache_importance
 
         study = StudyWrapper(storage, study_id, trials)

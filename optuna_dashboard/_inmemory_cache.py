@@ -64,6 +64,21 @@ class InMemoryCache:
             self._trials_unfinished_ids.clear()
             self._trials_last_finished_id.clear()
 
+    def invalidate_study(self, study_id: int) -> None:
+        """Drop every per-study cache so it is rebuilt from scratch.
+
+        Used when the incremental (append-only) trial cache is detected
+        to be inconsistent — e.g. the study was reset/trimmed under a
+        long-lived dashboard process that outlives sweep restarts.
+        """
+        with self._cached_extra_study_property_cache_lock:
+            self._cached_extra_study_property_cache.pop(study_id, None)
+        with self._trials_cache_lock:
+            self._trials_cache.pop(study_id, None)
+            self._trials_last_fetched_at.pop(study_id, None)
+            self._trials_unfinished_ids.pop(study_id, None)
+            self._trials_last_finished_id.pop(study_id, None)
+
 
 class _CachedExtraStudyProperty:
     def __init__(self) -> None:

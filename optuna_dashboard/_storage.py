@@ -41,6 +41,7 @@ def get_trials(
     # RDB backend) into an O(new + running) fetch on every poll.
     # See optuna.storages._CachedStorage._read_trials_from_remote_storage.
     if trials is not None and hasattr(storage, "_get_trials"):
+        stale = False
         try:
             with in_memory_cache._trials_cache_lock:
                 included_trial_ids = set(
@@ -65,24 +66,42 @@ def get_trials(
                 else:
                     merged = cached
 
-                unfinished = in_memory_cache._trials_unfinished_ids.setdefault(
-                    study_id, set()
-                )
-                last_finished = in_memory_cache._trials_last_finished_id.get(study_id, -1)
-                for t in updated:
-                    if not t.state.is_finished():
-                        unfinished.add(t._trial_id)
-                        continue
-                    last_finished = max(last_finished, t._trial_id)
-                    unfinished.discard(t._trial_id)
-                in_memory_cache._trials_last_finished_id[study_id] = last_finished
-                in_memory_cache._trials_cache[study_id] = merged
-                in_memory_cache._trials_last_fetched_at[study_id] = datetime.now()
-                return merged
+                # A single Optuna study numbers its trials exactly
+                # {0..N-1} (contiguous, unique). If that breaks, trials
+                # were deleted / the study was reset under this
+                # long-lived process — the append-only incremental path
+                # can't see deletions. Self-heal with a full reload.
+                n = len(merged)
+                if n:
+                    nums = [t.number for t in merged]
+                    if max(nums) != n - 1 or len(set(nums)) != n:
+                        stale = True
+
+                if not stale:
+                    unfinished = in_memory_cache._trials_unfinished_ids.setdefault(
+                        study_id, set()
+                    )
+                    last_finished = in_memory_cache._trials_last_finished_id.get(
+                        study_id, -1
+                    )
+                    for t in updated:
+                        if not t.state.is_finished():
+                            unfinished.add(t._trial_id)
+                            continue
+                        last_finished = max(last_finished, t._trial_id)
+                        unfinished.discard(t._trial_id)
+                    in_memory_cache._trials_last_finished_id[study_id] = last_finished
+                    in_memory_cache._trials_cache[study_id] = merged
+                    in_memory_cache._trials_last_fetched_at[study_id] = datetime.now()
+                    return merged
         except Exception:
             # Any backend/private-API surprise → fall back to a full reload
             # so the dashboard stays correct even if incremental fetch fails.
             pass
+
+        if stale:
+            # Wipe every per-study cache, then full-reload below.
+            in_memory_cache.invalidate_study(study_id)
 
     trials = storage.get_all_trials(study_id, deepcopy=False)
 
