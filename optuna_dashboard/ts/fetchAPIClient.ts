@@ -59,10 +59,12 @@ export class FetchAPIClient extends APIClient {
 
   getStudyDetail = async (
     studyId: number,
-    nLocalTrials: number
+    nLocalTrials: number,
+    limit?: number
   ): Promise<StudyDetail> => {
+    const limitParam = limit !== undefined && limit > 0 ? `&limit=${limit}` : ""
     const res = await fetch(
-      `${this.baseURL}/api/studies/${studyId}?after=${nLocalTrials}`
+      `${this.baseURL}/api/studies/${studyId}?after=${nLocalTrials}${limitParam}`
     )
     const data = await this.handleResponse<StudyDetailResponse>(res)
     const trials = data.trials.map((trial): Trial => {

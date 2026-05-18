@@ -95,7 +95,7 @@ const plotIntermediateValue = (
       y: trial.intermediate_values.map((iv) => iv.value),
       marker: { maxdisplayed: 10 },
       mode: "lines+markers",
-      type: "scatter",
+      type: "scattergl",
       name: `trial #${trial.number} ${
         trial.state === "Running"
           ? "(running)"

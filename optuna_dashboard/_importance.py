@@ -61,7 +61,12 @@ def get_param_importance_from_trials_cache(
     cache_key = f"{study_id}:{objective_id}"
     with param_importance_cache_lock:
         cache_n_trial, cache_importance = param_importance_cache.get(cache_key, (0, []))
-        if n_completed_trials == cache_n_trial:
+        # PED-ANOVA is O(n_completed) and the result is an approximation, so
+        # recomputing it on every single new trial is pointless at 100k+ trials.
+        # Only recompute once the completed-trial count grew by a meaningful
+        # margin (>=2%, min 100) since the cached value was produced.
+        recompute_threshold = max(100, cache_n_trial // 50)
+        if cache_n_trial > 0 and n_completed_trials - cache_n_trial < recompute_threshold:
             return cache_importance
 
         study = StudyWrapper(storage, study_id, trials)

@@ -28,6 +28,10 @@ export const studySummariesLoadingState = atom<boolean>(false)
 
 export const studyDetailLoadingState = atom<Record<number, boolean>>({})
 
+// Number of trials fetched so far during the initial chunked load.
+// An entry is present only while that study's initial load is in progress.
+export const studyDetailLoadingTrialsState = atom<Record<number, number>>({})
+
 export const trialListDurationTimeUnitState = atom<"ms" | "s" | "min" | "h">(
   "ms"
 )
@@ -46,6 +50,11 @@ export const usePlotlyColorThemeState = () => {
 export const useStudyDetailValue = (studyId: number): StudyDetail | null => {
   const studyDetails = useAtomValue(studyDetailsState)
   return studyDetails[studyId] || null
+}
+
+export const useStudyDetailLoadingTrials = (studyId: number): number | null => {
+  const loading = useAtomValue(studyDetailLoadingTrialsState)
+  return studyId in loading ? loading[studyId] : null
 }
 
 export const useStudySummaryValue = (studyId: number): StudySummary | null => {

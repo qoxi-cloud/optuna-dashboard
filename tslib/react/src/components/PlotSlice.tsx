@@ -244,7 +244,7 @@ const plotSlice = (
   )
   const trace: plotly.Data[] = [
     {
-      type: "scatter",
+      type: "scattergl",
       x: infeasibleValues,
       y: infeasibleObjectiveValues,
       mode: "markers",
@@ -255,7 +255,7 @@ const plotSlice = (
       },
     },
     {
-      type: "scatter",
+      type: "scattergl",
       x: feasibleValues,
       y: feasibleObjectiveValues,
       mode: "markers",

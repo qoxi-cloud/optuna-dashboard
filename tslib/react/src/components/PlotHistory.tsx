@@ -375,7 +375,7 @@ const plotHistory = (
         size: markerSize,
       },
       mode: "markers",
-      type: "scatter",
+      type: "scattergl",
       text: feasibleTrials.map((t) => makeHovertext(t)),
       hovertemplate: hovertemplate,
     })
@@ -431,7 +431,7 @@ const plotHistory = (
         y: yForLinePlot,
         name: `Best Value of ${h.study_name}`,
         mode: "lines",
-        type: "scatter",
+        type: "scattergl",
       })
     }
     infeasiblePlotData.push({
@@ -446,7 +446,7 @@ const plotHistory = (
           colorTheme === DarkColorTemplates.default ? "#666666" : "#cccccc",
       },
       mode: "markers",
-      type: "scatter",
+      type: "scattergl",
       text: infeasibleTrials.map((t) => makeHovertext(t)),
       hovertemplate: "%{text}<extra>Infeasible Trial</extra>",
       showlegend: false,
@@ -466,7 +466,7 @@ const plotHistory = (
         color: "#ffffff00",
       },
       mode: "markers",
-      type: "scatter",
+      type: "scattergl",
       text: unselectedTrials.map((t) => makeHovertext(t)),
       hovertemplate: "%{text}<extra>Unselected Trial</extra>",
       showlegend: false,

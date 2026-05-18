@@ -251,6 +251,16 @@ def create_app(
             return {"reason": "`after` should be larger or equal 0."}
         except KeyError:
             after = 0
+        try:
+            # Optional chunk size so the client can fetch huge studies (100k+
+            # trials) progressively instead of one giant response.
+            limit = int(request.params["limit"])
+            assert limit > 0
+        except AssertionError:
+            response.status = 400  # Bad parameter
+            return {"reason": "`limit` should be larger than 0."}
+        except KeyError:
+            limit = -1
         study = get_study(storage, study_id)
         if study is None:
             response.status = 404  # Not found
@@ -281,10 +291,11 @@ def create_app(
         plotly_graph_objects = get_plotly_graph_objects(system_attrs)
         skipped_trial_ids = get_skipped_trial_ids(system_attrs)
         skipped_trial_numbers = [t.number for t in trials if t._trial_id in skipped_trial_ids]
+        trials_slice = trials[after:] if limit < 0 else trials[after : after + limit]
         return serialize_study_detail(
             study,
             best_trials,
-            trials[after:],
+            trials_slice,
             intersection,
             union,
             union_user_attrs,

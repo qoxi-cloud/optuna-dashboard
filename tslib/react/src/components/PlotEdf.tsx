@@ -118,7 +118,7 @@ const plotEdf = (
     }
 
     return {
-      type: "scatter",
+      type: "scattergl",
       name: `${h.study_name}`,
       x: xValues,
       y: yValues,

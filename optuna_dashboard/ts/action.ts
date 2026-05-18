@@ -7,6 +7,7 @@ import {
   isFileUploading,
   reloadIntervalState,
   studyDetailLoadingState,
+  studyDetailLoadingTrialsState,
   studyDetailsState,
   studySummariesLoadingState,
   studySummariesState,
@@ -34,6 +35,7 @@ export const actionCreator = () => {
   const [studyDetailLoading, setStudyDetailLoading] = useAtom(
     studyDetailLoadingState
   )
+  const setStudyDetailLoadingTrials = useSetAtom(studyDetailLoadingTrialsState)
 
   const setStudyDetailState = (studyId: number, study: StudyDetail) => {
     setStudyDetails((prevVal) => {
@@ -208,41 +210,86 @@ export const actionCreator = () => {
       })
   }
 
-  const updateStudyDetail = (studyId: number) => {
+  // Chunk size for the initial progressive load of large studies.
+  const STUDY_DETAIL_CHUNK_SIZE = 5000
+
+  const reportStudyDetailError = (err: unknown) => {
+    // @ts-ignore - keep parity with the previous error handling
+    const reason = err?.response?.data?.reason
+    if (reason !== undefined) {
+      enqueueSnackbar(`Failed to fetch study (reason=${reason})`, {
+        variant: "error",
+      })
+    }
+    console.log(err)
+  }
+
+  const updateStudyDetail = async (studyId: number) => {
     if (studyDetailLoading[studyId]) {
       return
     }
-    setStudyDetailLoading({ ...studyDetailLoading, [studyId]: true })
-    let nLocalFixedTrials = 0
-    if (studyId in studyDetails) {
-      const currentTrials = studyDetails[studyId].trials
+    setStudyDetailLoading((p) => ({ ...p, [studyId]: true }))
+
+    const prev = studyId in studyDetails ? studyDetails[studyId] : undefined
+
+    // Incremental refresh: study already loaded → fetch only the tail.
+    if (prev !== undefined) {
+      const currentTrials = prev.trials
       const firstUpdatable = currentTrials.findIndex((trial) =>
         ["Running", "Waiting"].includes(trial.state)
       )
-      nLocalFixedTrials =
+      const nLocalFixedTrials =
         firstUpdatable === -1 ? currentTrials.length : firstUpdatable
-    }
-    apiClient
-      .getStudyDetail(studyId, nLocalFixedTrials)
-      .then((study) => {
-        setStudyDetailLoading({ ...studyDetailLoading, [studyId]: false })
-        const currentFixedTrials =
-          studyId in studyDetails
-            ? studyDetails[studyId].trials.slice(0, nLocalFixedTrials)
-            : []
-        study.trials = currentFixedTrials.concat(study.trials)
-        setStudyDetailState(studyId, study)
-      })
-      .catch((err) => {
-        setStudyDetailLoading({ ...studyDetailLoading, [studyId]: false })
-        const reason = err.response?.data.reason
-        if (reason !== undefined) {
-          enqueueSnackbar(`Failed to fetch study (reason=${reason})`, {
-            variant: "error",
-          })
+      try {
+        const study = await apiClient.getStudyDetail(studyId, nLocalFixedTrials)
+        if (
+          study.trials.length === 0 &&
+          nLocalFixedTrials === prev.trials.length
+        ) {
+          // Nothing new from the backend: keep the previous trials array
+          // reference so memoized graphs/tables (100k+ points) don't recompute.
+          study.trials = prev.trials
+        } else {
+          study.trials = prev.trials
+            .slice(0, nLocalFixedTrials)
+            .concat(study.trials)
         }
-        console.log(err)
+        setStudyDetailState(studyId, study)
+      } catch (err) {
+        reportStudyDetailError(err)
+      } finally {
+        setStudyDetailLoading((p) => ({ ...p, [studyId]: false }))
+      }
+      return
+    }
+
+    // Initial load: pull trials in chunks and render progressively so a 100k+
+    // trial study shows a loader + partial data instead of one huge stall.
+    try {
+      let acc: Trial[] = []
+      for (;;) {
+        const chunk = await apiClient.getStudyDetail(
+          studyId,
+          acc.length,
+          STUDY_DETAIL_CHUNK_SIZE
+        )
+        acc = acc.concat(chunk.trials)
+        setStudyDetailState(studyId, { ...chunk, trials: acc })
+        setStudyDetailLoadingTrials((p) => ({ ...p, [studyId]: acc.length }))
+        if (chunk.trials.length < STUDY_DETAIL_CHUNK_SIZE) {
+          break
+        }
+      }
+    } catch (err) {
+      reportStudyDetailError(err)
+    } finally {
+      setStudyDetailLoadingTrials((p) => {
+        const next = { ...p }
+        delete next[studyId]
+        return next
       })
+      setStudyDetailLoading((p) => ({ ...p, [studyId]: false }))
+    }
   }
 
   const createNewStudy = (

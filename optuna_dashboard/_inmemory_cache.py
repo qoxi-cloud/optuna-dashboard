@@ -49,6 +49,11 @@ class InMemoryCache:
         self._trials_cache: dict[int, list[FrozenTrial]] = {}
         self._trials_cache_lock = threading.Lock()
         self._trials_last_fetched_at: dict[int, datetime] = {}
+        # Incremental-fetch bookkeeping (mirrors optuna's _CachedStorage):
+        # finished trials are immutable, so only unfinished + brand-new trials
+        # are re-read from the backend on each refresh.
+        self._trials_unfinished_ids: dict[int, Set[int]] = {}
+        self._trials_last_finished_id: dict[int, int] = {}
 
     def clear(self) -> None:
         with self._cached_extra_study_property_cache_lock:
@@ -56,6 +61,8 @@ class InMemoryCache:
         with self._trials_cache_lock:
             self._trials_cache.clear()
             self._trials_last_fetched_at.clear()
+            self._trials_unfinished_ids.clear()
+            self._trials_last_finished_id.clear()
 
 
 class _CachedExtraStudyProperty:

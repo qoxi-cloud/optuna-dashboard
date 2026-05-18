@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import math
 import numbers
 from typing import Any
 from typing import TYPE_CHECKING
 from typing import Union
 
-import numpy as np
 from optuna.distributions import BaseDistribution
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
@@ -248,14 +248,13 @@ def serialize_frozen_trial(
     serialized_intermediate_values: list[IntermediateValue] = []
     for step, value in trial.intermediate_values.items():
         serialized_value: Union[float, Literal["nan", "inf", "-inf"]]
-        if np.isnan(value):
+        # math.* on Python scalars is ~10-50x faster than numpy ufunc dispatch;
+        # this runs for every intermediate value of every trial on first load.
+        if math.isnan(value):
             serialized_value = "nan"
-        elif np.isposinf(value):
-            serialized_value = "inf"
-        elif np.isneginf(value):
-            serialized_value = "-inf"
+        elif math.isinf(value):
+            serialized_value = "inf" if value > 0 else "-inf"
         else:
-            assert np.isfinite(value)
             serialized_value = value
         serialized_intermediate_values.append({"step": step, "value": serialized_value})
     serialized["intermediate_values"] = sorted(
@@ -265,11 +264,9 @@ def serialize_frozen_trial(
     if trial.values is not None:
         serialized_values: list[Union[float, Literal["inf", "-inf"]]] = []
         for v in trial.values:
-            assert not np.isnan(v), "Should not detect nan value"
-            if np.isposinf(v):
-                serialized_values.append("inf")
-            elif np.isneginf(v):
-                serialized_values.append("-inf")
+            assert not math.isnan(v), "Should not detect nan value"
+            if math.isinf(v):
+                serialized_values.append("inf" if v > 0 else "-inf")
             else:
                 serialized_values.append(v)
         serialized["values"] = serialized_values

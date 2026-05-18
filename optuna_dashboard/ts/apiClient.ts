@@ -241,7 +241,8 @@ export abstract class APIClient {
   abstract getMetaInfo(): Promise<APIMeta>
   abstract getStudyDetail(
     studyId: number,
-    nLocalTrials: number
+    nLocalTrials: number,
+    limit?: number
   ): Promise<StudyDetail>
   abstract getStudySummaries(): Promise<StudySummary[]>
   abstract createNewStudy(

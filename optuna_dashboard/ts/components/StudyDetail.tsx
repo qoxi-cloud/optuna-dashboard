@@ -6,6 +6,7 @@ import {
   Card,
   CardContent,
   IconButton,
+  LinearProgress,
   Link as MuiLink,
   Typography,
   useTheme,
@@ -17,7 +18,11 @@ import { Link, useParams } from "react-router-dom"
 import { useConstants } from "../constantsProvider"
 import { useLLMIsAvailable } from "../hooks/useAPIMeta"
 import { useLatestStudyDetail } from "../hooks/useLatestStudyDetail"
-import { useStudyIsPreferential, useStudyName } from "../state"
+import {
+  useStudyDetailLoadingTrials,
+  useStudyIsPreferential,
+  useStudyName,
+} from "../state"
 import { AppDrawer } from "./AppDrawer"
 import { GraphByLLM } from "./GraphByLLM"
 import { Contour } from "./GraphContour"
@@ -71,6 +76,8 @@ export const StudyDetail: FC<{
       (!isPreferential && page === "trialList") ||
       (!!isPreferential && page === "top"),
   })
+
+  const loadingTrials = useStudyDetailLoadingTrials(studyId)
 
   const title =
     studyName !== null ? `${studyName} (id=${studyId})` : `Study #${studyId}`
@@ -232,6 +239,17 @@ export const StudyDetail: FC<{
         toggleColorMode={toggleColorMode}
         toolbar={toolbar}
       >
+        {loadingTrials !== null && (
+          <Box component="div" sx={{ width: "100%" }}>
+            <LinearProgress />
+            <Typography
+              variant="caption"
+              sx={{ display: "block", textAlign: "center", padding: 0.5 }}
+            >
+              Loading trials… {loadingTrials.toLocaleString()} loaded
+            </Typography>
+          </Box>
+        )}
         {content}
       </AppDrawer>
     </Box>
