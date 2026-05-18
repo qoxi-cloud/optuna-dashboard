@@ -38,6 +38,9 @@ FROM python:3.12-slim-bookworm AS runner
 
 COPY --from=python-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=python-builder /usr/local/bin/optuna-dashboard /usr/local/bin/optuna-dashboard
+# gunicorn console script — needed by the qoxi launcher
+# (optuna_dashboard._qoxi); without this only `python -m gunicorn` works.
+COPY --from=python-builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn
 
 RUN mkdir /app
 WORKDIR /app
