@@ -302,6 +302,7 @@ def create_app(
             has_intermediate_values,
             plotly_graph_objects,
             skipped_trial_numbers,
+            len(trials),
         )
 
     @app.get("/api/studies/<study_id:int>/param_importances")

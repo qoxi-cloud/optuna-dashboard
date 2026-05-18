@@ -138,11 +138,16 @@ def serialize_study_detail(
     has_intermediate_values: bool,
     plotly_graph_objects: dict[str, str],
     skipped_trial_numbers: list[int],
+    trial_count: int,
 ) -> dict[str, Any]:
     serialized: dict[str, Any] = {
         "name": study.study_name,
         "directions": [d.name.lower() for d in study.directions],
         "user_attrs": serialize_attrs(study.user_attrs),
+        # Authoritative total trial count for the whole study (not just the
+        # `trials` slice). Lets the client detect a diverged local cache
+        # and self-heal with a full reload.
+        "trial_count": trial_count,
     }
     system_attrs = study.system_attrs
     serialized["artifacts"] = list_study_artifacts(system_attrs)

@@ -69,7 +69,7 @@ def test_get_study_detail_is_preferential() -> None:
     studies = get_studies(storage)
     assert len(studies) == 1
 
-    study_detail = serialize_study_detail(studies[0], [], study.trials, [], [], [], False, {}, [])
+    study_detail = serialize_study_detail(studies[0], [], study.trials, [], [], [], False, {}, [], len(study.trials))
     assert study_detail["is_preferential"]
 
 
@@ -79,7 +79,7 @@ def test_get_study_detail_is_not_preferential() -> None:
     studies = get_studies(storage)
     assert len(studies) == 1
 
-    study_detail = serialize_study_detail(studies[0], [], study.trials, [], [], [], False, {}, [])
+    study_detail = serialize_study_detail(studies[0], [], study.trials, [], [], [], False, {}, [], len(study.trials))
     assert not study_detail["is_preferential"]
 
 

@@ -77,6 +77,7 @@ export interface StudyDetailResponse {
   artifacts: Artifact[]
   feedback_component_type: FeedbackComponentType
   skipped_trial_numbers?: number[]
+  trial_count?: number
 }
 
 export interface StudySummariesResponse {

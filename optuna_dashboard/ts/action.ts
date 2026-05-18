@@ -224,47 +224,10 @@ export const actionCreator = () => {
     console.log(err)
   }
 
-  const updateStudyDetail = async (studyId: number) => {
-    if (studyDetailLoading[studyId]) {
-      return
-    }
-    setStudyDetailLoading((p) => ({ ...p, [studyId]: true }))
-
-    const prev = studyId in studyDetails ? studyDetails[studyId] : undefined
-
-    // Incremental refresh: study already loaded → fetch only the tail.
-    if (prev !== undefined) {
-      const currentTrials = prev.trials
-      const firstUpdatable = currentTrials.findIndex((trial) =>
-        ["Running", "Waiting"].includes(trial.state)
-      )
-      const nLocalFixedTrials =
-        firstUpdatable === -1 ? currentTrials.length : firstUpdatable
-      try {
-        const study = await apiClient.getStudyDetail(studyId, nLocalFixedTrials)
-        if (
-          study.trials.length === 0 &&
-          nLocalFixedTrials === prev.trials.length
-        ) {
-          // Nothing new from the backend: keep the previous trials array
-          // reference so memoized graphs/tables (100k+ points) don't recompute.
-          study.trials = prev.trials
-        } else {
-          study.trials = prev.trials
-            .slice(0, nLocalFixedTrials)
-            .concat(study.trials)
-        }
-        setStudyDetailState(studyId, study)
-      } catch (err) {
-        reportStudyDetailError(err)
-      } finally {
-        setStudyDetailLoading((p) => ({ ...p, [studyId]: false }))
-      }
-      return
-    }
-
-    // Initial load: pull trials in chunks and render progressively so a 100k+
-    // trial study shows a loader + partial data instead of one huge stall.
+  // Load the whole study from scratch in chunks, rendering progressively
+  // (loader + partial data) so a 100k+ trial study doesn't stall. Owns the
+  // progress-loader lifecycle.
+  const loadStudyDetailFromScratch = async (studyId: number) => {
     try {
       let acc: Trial[] = []
       for (;;) {
@@ -279,15 +242,69 @@ export const actionCreator = () => {
         if (chunk.trials.length < STUDY_DETAIL_CHUNK_SIZE) {
           break
         }
+        if (
+          chunk.trial_count !== undefined &&
+          acc.length >= chunk.trial_count
+        ) {
+          break
+        }
       }
-    } catch (err) {
-      reportStudyDetailError(err)
     } finally {
       setStudyDetailLoadingTrials((p) => {
         const next = { ...p }
         delete next[studyId]
         return next
       })
+    }
+  }
+
+  const updateStudyDetail = async (studyId: number) => {
+    if (studyDetailLoading[studyId]) {
+      return
+    }
+    setStudyDetailLoading((p) => ({ ...p, [studyId]: true }))
+
+    const prev = studyId in studyDetails ? studyDetails[studyId] : undefined
+
+    try {
+      // Incremental refresh: study already loaded → fetch only the tail.
+      if (prev !== undefined) {
+        const currentTrials = prev.trials
+        const firstUpdatable = currentTrials.findIndex((trial) =>
+          ["Running", "Waiting"].includes(trial.state)
+        )
+        const nLocalFixedTrials =
+          firstUpdatable === -1 ? currentTrials.length : firstUpdatable
+        const study = await apiClient.getStudyDetail(studyId, nLocalFixedTrials)
+        let merged: Trial[]
+        if (
+          study.trials.length === 0 &&
+          nLocalFixedTrials === prev.trials.length
+        ) {
+          // Nothing new from the backend: keep the previous trials array
+          // reference so memoized graphs/tables (100k+ points) don't recompute.
+          merged = prev.trials
+        } else {
+          merged = prev.trials.slice(0, nLocalFixedTrials).concat(study.trials)
+        }
+        // Self-heal: if the local cache diverged from the server's
+        // authoritative count (study reset/trimmed under a long-lived tab
+        // → phantom "mythical" trials), discard it and reload from scratch.
+        if (
+          study.trial_count !== undefined &&
+          merged.length !== study.trial_count
+        ) {
+          await loadStudyDetailFromScratch(studyId)
+        } else {
+          study.trials = merged
+          setStudyDetailState(studyId, study)
+        }
+      } else {
+        await loadStudyDetailFromScratch(studyId)
+      }
+    } catch (err) {
+      reportStudyDetailError(err)
+    } finally {
       setStudyDetailLoading((p) => ({ ...p, [studyId]: false }))
     }
   }

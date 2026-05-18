@@ -139,6 +139,9 @@ export type StudyDetail = {
   plotly_graph_objects: PlotlyGraphObject[]
   artifacts: Artifact[]
   skipped_trial_numbers: number[]
+  // Authoritative total trial count for the whole study (server-reported),
+  // used to detect & self-heal a diverged local trials cache.
+  trial_count?: number
 }
 
 export type StudyDetails = {

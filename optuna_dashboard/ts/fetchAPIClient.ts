@@ -97,6 +97,7 @@ export class FetchAPIClient extends APIClient {
       plotly_graph_objects: data.plotly_graph_objects,
       artifacts: data.artifacts,
       skipped_trial_numbers: data.skipped_trial_numbers ?? [],
+      trial_count: data.trial_count,
     }
   }
 
