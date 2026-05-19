@@ -10,6 +10,8 @@ import logging
 import mimetypes
 import os
 import re
+import threading
+import time
 import typing
 import warnings
 
@@ -91,6 +93,31 @@ def create_app(
 ) -> Bottle:
     app = Bottle()
     app._inmemory_cache = InMemoryCache()
+
+    # Background cache warmer. The cold full reload of a huge study
+    # (~100s at 60k+ trials) must never happen on a user request — it
+    # would exceed the cloudflared ~100s edge timeout (524 → "doesn't
+    # load"). This daemon does that reload off-request at startup and
+    # keeps every study's cache warm during idle, so user requests
+    # almost always hit a warm cache and only do cheap incremental
+    # refreshes. Single-flight in get_trials prevents it racing users.
+    def _warm_caches() -> None:
+        while True:
+            try:
+                for s in get_studies(storage):
+                    try:
+                        get_trials(app._inmemory_cache, storage, s._study_id)
+                    except Exception:
+                        logger.exception(
+                            "cache warm failed for study_id=%s", s._study_id
+                        )
+            except Exception:
+                logger.exception("cache warmer iteration failed")
+            time.sleep(30)
+
+    threading.Thread(
+        target=_warm_caches, name="optuna-dashboard-cache-warmer", daemon=True
+    ).start()
 
     @app.hook("before_request")
     def remove_trailing_slashes_hook() -> None:

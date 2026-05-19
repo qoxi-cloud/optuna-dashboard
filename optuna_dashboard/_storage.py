@@ -189,18 +189,36 @@ def get_trials(
             # Wipe every per-study cache, then full-reload below.
             in_memory_cache.invalidate_study(study_id)
 
-    trials = storage.get_all_trials(study_id, deepcopy=False)
+    # Cold full reload: storage.get_all_trials over the WHOLE study. At
+    # 60k+ trials this is ~100s (6 queries + ORM hydration; host-/pooler-
+    # independent). Single-flight it: only one thread (typically the
+    # background warmer) does the reload; everyone else returns the
+    # current cache immediately so a user request never blocks ~100s
+    # (which would hit the cloudflared ~100s edge timeout → 524).
+    with in_memory_cache._loading_lock:
+        already_loading = study_id in in_memory_cache._loading
+        if already_loading:
+            current = in_memory_cache._trials_cache.get(study_id)
+        else:
+            in_memory_cache._loading.add(study_id)
+    if already_loading:
+        return current if current is not None else []
 
-    with in_memory_cache._trials_cache_lock:
-        unfinished_ids = {t._trial_id for t in trials if not t.state.is_finished()}
-        finished_ids = [t._trial_id for t in trials if t.state.is_finished()]
-        in_memory_cache._trials_unfinished_ids[study_id] = unfinished_ids
-        in_memory_cache._trials_last_finished_id[study_id] = (
-            max(finished_ids) if finished_ids else -1
-        )
-        in_memory_cache._trials_last_fetched_at[study_id] = datetime.now()
-        in_memory_cache._trials_cache[study_id] = trials
-    return trials
+    try:
+        trials = storage.get_all_trials(study_id, deepcopy=False)
+        with in_memory_cache._trials_cache_lock:
+            unfinished_ids = {t._trial_id for t in trials if not t.state.is_finished()}
+            finished_ids = [t._trial_id for t in trials if t.state.is_finished()]
+            in_memory_cache._trials_unfinished_ids[study_id] = unfinished_ids
+            in_memory_cache._trials_last_finished_id[study_id] = (
+                max(finished_ids) if finished_ids else -1
+            )
+            in_memory_cache._trials_last_fetched_at[study_id] = datetime.now()
+            in_memory_cache._trials_cache[study_id] = trials
+        return trials
+    finally:
+        with in_memory_cache._loading_lock:
+            in_memory_cache._loading.discard(study_id)
 
 
 def get_studies(storage: BaseStorage) -> list[FrozenStudy]:

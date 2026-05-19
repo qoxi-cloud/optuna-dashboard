@@ -54,6 +54,12 @@ class InMemoryCache:
         # are re-read from the backend on each refresh.
         self._trials_unfinished_ids: dict[int, Set[int]] = {}
         self._trials_last_finished_id: dict[int, int] = {}
+        # Single-flight guard for the expensive cold full reload
+        # (storage.get_all_trials over the whole study, ~100s at 60k+
+        # trials). Only one thread does it per study; concurrent callers
+        # return the current cache instead of stampeding duplicate reloads.
+        self._loading_lock = threading.Lock()
+        self._loading: Set[int] = set()
 
     def clear(self) -> None:
         with self._cached_extra_study_property_cache_lock:
