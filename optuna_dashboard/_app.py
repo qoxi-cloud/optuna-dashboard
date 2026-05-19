@@ -106,6 +106,8 @@ def create_app(
             try:
                 for s in get_studies(storage):
                     try:
+                        # Pre-warm so a user request rarely becomes the
+                        # single-flight cold loader for a huge study.
                         get_trials(app._inmemory_cache, storage, s._study_id)
                     except Exception:
                         logger.exception(
