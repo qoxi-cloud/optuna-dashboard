@@ -142,25 +142,23 @@ def get_trials(
                 else:
                     merged = cached
 
-                # A single Optuna study numbers its trials exactly
-                # {0..N-1} (contiguous, unique). If that breaks, trials
-                # were deleted / the study was reset under this
-                # long-lived process — the append-only incremental path
-                # can't see deletions. Self-heal with a full reload.
+                # Staleness detection is the authoritative-COUNT anchor
+                # ONLY. (A previous dense trial-number invariant assumed a
+                # study's numbers are exactly {0..N-1} unique/contiguous —
+                # FALSE under many concurrent sweep pods: Optuna's RDB
+                # number assignment races, producing duplicate & gapped
+                # numbers, e.g. 61307 rows / 59732 distinct / 1558 dups.
+                # That invariant then flagged the valid cache stale on
+                # every refresh → endless cold-reload loop → 0 trials.)
+                #
+                # The cache is keyed by trial_id (always unique), so its
+                # length tracks the row count regardless of number dups.
+                # If it holds MORE than the study actually has, it's stale
+                # (reset/trimmed, incl. schema-recreate). Only "cache > DB"
+                # is stale — being a few behind during a fast sweep is
+                # normal incremental lag and must not thrash the reload.
                 n = len(merged)
-                if n:
-                    nums = [t.number for t in merged]
-                    if max(nums) != n - 1 or len(set(nums)) != n:
-                        stale = True
-
-                # Authoritative anchor: if the cache holds MORE trials than
-                # the study actually has, it is stale (study reset/trimmed,
-                # incl. the schema-recreate / trial_id-sequence-reset case
-                # the dense-number invariant cannot detect). Only the
-                # "cache > DB" direction is treated as stale — being a few
-                # behind during a fast sweep is normal incremental lag, not
-                # phantom, and must not thrash the full-reload path.
-                if not stale and actual_count is not None and n > actual_count:
+                if actual_count is not None and n > actual_count:
                     stale = True
 
                 if not stale:
