@@ -2,33 +2,76 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timedelta
+import threading
 
 from optuna.storages import BaseStorage
 from optuna.storages import RDBStorage
 from optuna.study import StudyDirection
 from optuna.study._frozen import FrozenStudy
 from optuna.trial import FrozenTrial
+from sqlalchemy import create_engine
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from ._inmemory_cache import InMemoryCache
 
 
+_count_engine_lock = threading.Lock()
+_count_engines: dict[str, "Engine"] = {}
+
+
+def _count_engine(storage: BaseStorage) -> "Engine | None":
+    """A dedicated, tightly-bounded engine just for the COUNT anchor.
+
+    MUST NOT share the main RDBStorage pool: the COUNT runs on every
+    refresh and, if it waited on a pool exhausted by big get_all_trials
+    reads (or a slow pgbouncer pooler), it would stall. A separate
+    pool_size=1 engine with short connect/pool timeouts isolates and
+    bounds it — worst case it raises fast and we keep the fast path.
+    """
+    engine = getattr(storage, "engine", None)
+    if engine is None:
+        return None
+    url = str(engine.url)
+    with _count_engine_lock:
+        ce = _count_engines.get(url)
+        if ce is None:
+            connect_args = {}
+            if engine.dialect.name == "postgresql":
+                connect_args = {"connect_timeout": 3}
+            ce = create_engine(
+                engine.url,
+                pool_size=1,
+                max_overflow=1,
+                pool_timeout=3,
+                pool_recycle=300,
+                pool_pre_ping=True,
+                connect_args=connect_args,
+            )
+            _count_engines[url] = ce
+        return ce
+
+
 def _authoritative_trial_count(storage: BaseStorage, study_id: int) -> int | None:
-    """Cheap COUNT(*) of the study's trials straight from the RDB.
+    """Cheap, bounded COUNT(*) of the study's trials straight from the RDB.
 
     The append-only incremental cache cannot see a study reset when the
     new trials get trial_ids <= the cached watermark (e.g. the sweep
     recreates the Optuna schema → the trial_id sequence restarts). The
     dense-number invariant also passes then, because the stale cached set
     is internally contiguous. An authoritative count is the only reliable
-    anchor. Returns None if it can't be obtained (non-RDB / error) so the
-    caller just keeps the fast path.
+    anchor. Returns None if it can't be obtained quickly (non-RDB / error
+    / timeout) so the caller just keeps the fast path. NEVER call this
+    while holding the trials-cache lock — it does network I/O.
     """
-    engine = getattr(storage, "engine", None)
-    if engine is None:
+    ce = _count_engine(storage)
+    if ce is None:
         return None
     try:
-        with engine.connect() as conn:
+        with ce.connect() as conn:
+            if ce.dialect.name == "postgresql":
+                # Cap the query so it can never hang the dashboard.
+                conn.exec_driver_sql("SET statement_timeout = 4000")
             return int(
                 conn.execute(
                     text("SELECT count(*) FROM trials WHERE study_id = :sid"),
@@ -83,6 +126,12 @@ def get_trials(
                 trial_id_greater_than=last_finished_id,
             )
 
+            # Authoritative count is network I/O — compute it OUTSIDE the
+            # trials-cache lock. Doing it under the lock (the sha-32be77c
+            # regression) serialised every request behind one DB round-trip
+            # and, when the pooler stalled, wedged the whole worker.
+            actual_count = _authoritative_trial_count(storage, study_id)
+
             with in_memory_cache._trials_cache_lock:
                 cached = in_memory_cache._trials_cache.get(study_id) or []
                 if updated:
@@ -111,10 +160,8 @@ def get_trials(
                 # "cache > DB" direction is treated as stale — being a few
                 # behind during a fast sweep is normal incremental lag, not
                 # phantom, and must not thrash the full-reload path.
-                if not stale:
-                    actual = _authoritative_trial_count(storage, study_id)
-                    if actual is not None and n > actual:
-                        stale = True
+                if not stale and actual_count is not None and n > actual_count:
+                    stale = True
 
                 if not stale:
                     unfinished = in_memory_cache._trials_unfinished_ids.setdefault(
