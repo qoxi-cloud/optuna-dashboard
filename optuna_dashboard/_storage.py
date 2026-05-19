@@ -153,12 +153,15 @@ def get_trials(
                 #
                 # The cache is keyed by trial_id (always unique), so its
                 # length tracks the row count regardless of number dups.
-                # If it holds MORE than the study actually has, it's stale
-                # (reset/trimmed, incl. schema-recreate). Only "cache > DB"
-                # is stale — being a few behind during a fast sweep is
-                # normal incremental lag and must not thrash the reload.
+                # If it holds VASTLY more than the study actually has, it
+                # was reset/trimmed (schema-recreate → count ≈ 0). Require
+                # the cache to exceed the DB by >2x: a genuine reset drops
+                # 60k→~0 (huge ratio); read-replica lag on the ro pooler
+                # is at most a few hundred behind (tiny ratio) and must NOT
+                # trigger a needless ~100s cold reload (which starves the
+                # pool and times out every request — the bug this fixes).
                 n = len(merged)
-                if actual_count is not None and n > actual_count:
+                if actual_count is not None and n > 2 * actual_count:
                     stale = True
 
                 if not stale:

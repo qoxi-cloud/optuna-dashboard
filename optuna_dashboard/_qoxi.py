@@ -47,9 +47,14 @@ logging.basicConfig(
 )
 _log = logging.getLogger("optuna_dashboard.launcher")
 
+# Headroom so the one long cold get_all_trials (~100s at startup) can't
+# starve the many small concurrent queries (get_study's 4 lookups,
+# incremental fetch). Single dashboard process → a handful of extra PG
+# connections is well within budget.
 _RDB_ENGINE_KWARGS = {
-    "pool_size": 2,
-    "max_overflow": 2,
+    "pool_size": 4,
+    "max_overflow": 8,
+    "pool_timeout": 10,
     "pool_pre_ping": True,
     "pool_recycle": 3600,
 }
