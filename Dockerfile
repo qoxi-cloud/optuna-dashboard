@@ -27,7 +27,7 @@ FROM python:3.12-bookworm AS python-builder
 
 WORKDIR /usr/src
 RUN pip install --upgrade pip setuptools
-RUN pip install --progress-bar off PyMySQL[rsa] psycopg2-binary gunicorn
+RUN pip install --progress-bar off PyMySQL[rsa] psycopg2-binary gunicorn redis
 
 ADD ./pyproject.toml /usr/src/pyproject.toml
 ADD ./optuna_dashboard /usr/src/optuna_dashboard
