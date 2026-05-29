@@ -144,6 +144,14 @@ class _FollowActiveRedisStorage:
         return getattr(self._live(), name)
 
 
+# Register as a VIRTUAL subclass of BaseStorage so optuna-dashboard's
+# get_storage() isinstance(storage, BaseStorage) check passes (else it treats
+# this object as a storage-URL string and calls .startswith on it → crash).
+# Virtual registration does NOT inherit BaseStorage's abstract methods, so
+# __getattr__ keeps delegating every storage call to the live JournalStorage.
+BaseStorage.register(_FollowActiveRedisStorage)
+
+
 def _build_storage() -> BaseStorage:
     # Redis JournalStorage (the no-ML sweep). The sweep writes each study under a
     # per-study key prefix (to bound each worker's in-RAM journal replay), so the
