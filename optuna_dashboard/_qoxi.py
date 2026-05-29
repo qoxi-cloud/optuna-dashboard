@@ -61,6 +61,24 @@ _RDB_ENGINE_KWARGS = {
 
 
 def _build_storage() -> BaseStorage:
+    # Redis JournalStorage (the no-ML sweep). The sweep writes each study under a
+    # per-study key prefix (to bound each worker's in-RAM journal replay), so the
+    # dashboard must be pointed at ONE study's prefix via OPTUNA_REDIS_PREFIX —
+    # with an empty prefix it sees the (empty) root namespace. Set the prefix to
+    # the study you want to inspect, e.g. "EURUSD_bs300s_1m_SELL_noml:".
+    redis_url = os.environ.get("OPTUNA_REDIS", "").strip()
+    if redis_url:
+        from optuna.storages import JournalStorage
+        from optuna.storages.journal import JournalRedisBackend
+
+        prefix = os.environ.get("OPTUNA_REDIS_PREFIX", "").strip()
+        _log.info(
+            "optuna-dashboard → Redis JournalStorage %s (prefix=%r)",
+            redis_url,
+            prefix,
+        )
+        return JournalStorage(JournalRedisBackend(redis_url, prefix=prefix))
+
     url = os.environ.get("OPTUNA_DASHBOARD_STORAGE") or os.environ.get(
         "STORAGE_URL"
     )
