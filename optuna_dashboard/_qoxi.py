@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 
 from optuna.storages import BaseStorage
 from optuna.storages import RDBStorage
@@ -60,6 +62,88 @@ _RDB_ENGINE_KWARGS = {
 }
 
 
+class _FollowActiveRedisStorage:
+    """Single-study Redis JournalStorage that AUTO-FOLLOWS the sweep's currently
+    running study.
+
+    The no-ML sweep writes each Optuna study under its OWN Redis key prefix
+    (``{study}:``) and GCs finished ones, so a plain ``JournalStorage(prefix=…)``
+    is pinned to one study and goes empty the moment the sweep advances to the
+    next (bar,expiry) cell / pair. pod-0 records the live study name in the key
+    ``janus_dashboard:current_study``; this wrapper re-reads it on a short TTL and
+    swaps the delegate ``JournalStorage`` when it changes, so the dashboard always
+    tracks the running study with no hardcoded prefix and no restart. All optuna
+    ``BaseStorage`` calls are forwarded to the live delegate via ``__getattr__``.
+    When the delegate swaps, study_id stays 1 with a new trial count → the fork's
+    COUNT-anchor incremental-cache self-heal reloads (same path as a wipe)."""
+
+    _MARKER = "janus_dashboard:current_study"
+
+    def __init__(self, redis_url: str, ttl: float = 10.0) -> None:
+        import redis  # noqa: PLC0415
+
+        self._url = redis_url
+        self._ttl = ttl
+        self._prefix: str | None = None
+        self._delegate: BaseStorage | None = None
+        self._last = 0.0
+        self._lock = threading.Lock()
+        self._redis = redis.from_url(redis_url, socket_connect_timeout=5)
+
+    def _resolve_prefix(self) -> str:
+        """Prefix of the currently-running study, from pod-0's marker key.
+        Falls back to the most-recently-written journal prefix (highest log
+        index) if the marker is absent, then to '' (empty → no studies)."""
+        try:
+            v = self._redis.get(self._MARKER)
+            if v:
+                name = v.decode() if isinstance(v, (bytes, bytearray)) else v
+                return f"{name}:"
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("current-study marker read failed (%s); keeping current", exc)
+            return self._prefix or ""
+        # marker absent → best-effort scan for the highest journal log index.
+        best_prefix, best_n = "", -1
+        try:
+            for raw in self._redis.scan_iter(match="*:log:*", count=1000):
+                k = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+                pre, sep, num = k.rpartition(":log:")
+                if not sep:
+                    continue
+                try:
+                    n = int(num)
+                except ValueError:
+                    continue
+                if n > best_n:
+                    best_n, best_prefix = n, pre
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("active-prefix scan failed (%s); keeping current", exc)
+            return self._prefix or ""
+        return best_prefix
+
+    def _live(self) -> BaseStorage:
+        now = time.monotonic()
+        with self._lock:
+            if self._delegate is None or now - self._last > self._ttl:
+                self._last = now
+                pre = self._resolve_prefix()
+                if self._delegate is None or pre != self._prefix:
+                    from optuna.storages import JournalStorage  # noqa: PLC0415
+                    from optuna.storages.journal import JournalRedisBackend  # noqa: PLC0415
+
+                    if pre != self._prefix:
+                        _log.info("dashboard now following study prefix %r", pre)
+                    self._prefix = pre
+                    self._delegate = JournalStorage(JournalRedisBackend(self._url, prefix=pre))
+            return self._delegate
+
+    def __getattr__(self, name: str):
+        # Reached only for attributes not on the instance (the BaseStorage API).
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return getattr(self._live(), name)
+
+
 def _build_storage() -> BaseStorage:
     # Redis JournalStorage (the no-ML sweep). The sweep writes each study under a
     # per-study key prefix (to bound each worker's in-RAM journal replay), so the
@@ -72,6 +156,12 @@ def _build_storage() -> BaseStorage:
         from optuna.storages.journal import JournalRedisBackend
 
         prefix = os.environ.get("OPTUNA_REDIS_PREFIX", "").strip()
+        # AUTO / empty → follow the sweep's currently-running per-study prefix at
+        # runtime (never goes stale when the sweep advances cell/pair). A literal
+        # prefix pins the dashboard to exactly that one study.
+        if prefix in ("", "AUTO", "auto"):
+            _log.info("optuna-dashboard → Redis %s (AUTO: follow active study)", redis_url)
+            return _FollowActiveRedisStorage(redis_url)  # type: ignore[return-value]
         _log.info(
             "optuna-dashboard → Redis JournalStorage %s (prefix=%r)",
             redis_url,
